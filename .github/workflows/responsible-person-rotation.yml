@@ -1,0 +1,118 @@
+name: Rotate responsible person
+
+on:
+  workflow_dispatch:
+    inputs:
+      index-override:
+        description: "New index to jump to (optional)"
+        required: false
+        default: ""
+  # schedule:
+  #   # Runs at 9:00 on Monday
+  #   - cron: "0 6 * * 1"
+
+jobs:
+  rotate-responsible-person:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Restore cache
+        uses: actions/cache@v3
+        with:
+          path: .github/workflows/data
+          key: rotating-responsible-name-index
+          restore-keys: rotating-responsible-name-index
+
+      - name: Ensure data directory exists
+        run: mkdir -p .github/workflows/data
+
+      - name: Check if it's the second Monday
+        if: github.event_name == 'schedule'
+        run: |
+          timestamp_file=".github/workflows/data/last_run_responsible_name_rotation_timestamp.txt"
+
+          if [ -f "$timestamp_file" ]; then
+            last_run_responsible_name_rotation_timestamp=$(cat "$timestamp_file")
+            current_timestamp=$(date +%s)
+            difference=$(( (current_timestamp - last_run_responsible_name_rotation_timestamp) / 86400 )) # Difference in days
+
+            if [ $difference -lt 10 ]; then
+              echo "Not enough time has passed since the last run. Exiting."
+              exit 1
+            fi
+          fi
+
+          # Update the last run timestamp
+          date +%s > "$timestamp_file"
+          echo "Proceeding with the workflow as it's been at least 10 days since the last run."
+
+      - name: Select name
+        id: select_name
+        run: |
+          names_file=".github/workflows/responsible-people.json"
+          index_file=".github/workflows/data/responsible_person_index.txt"
+
+          if [ ! -f "$names_file" ]; then
+              echo "Names file not found!"
+              exit 1
+          fi
+
+          mapfile -t names < <(jq -r '.names[]' "$names_file")
+
+          # Check if a manual index override is provided
+          if [ -n "${{ github.event.inputs.index-override }}" ]; then
+            selected_index=${{ github.event.inputs.index-override }}
+            echo "Manual index override provided: $selected_index"
+          else
+            if [ ! -f "$index_file" ]; then
+                echo 0 > "$index_file"
+            fi
+            selected_index=$(cat "$index_file")
+          fi
+
+          selected_name=${names[$selected_index]}
+          next_index=$(( (selected_index + 1) % ${#names[@]} ))
+          echo $next_index > "$index_file"
+          echo "selected_name=${selected_name}" >> $GITHUB_OUTPUT
+
+      - name: Post name to Slack channel
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          channel-id: "team-channel"
+          slack-message: "Responsible person for this sprint: ${{ steps.select_name.outputs.selected_name }}"
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+
+      - name: Invalidate cache
+        run: |
+          # Fetch existing caches
+          response=$(curl -H "Accept: application/vnd.github+json" \
+                          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                          https://api.github.com/repos/${{ github.repository }}/actions/caches)
+          echo "$response" > caches.json
+
+          # Extract cache IDs where key is rotating-responsible-name-index
+          cache_ids=$(echo "$response" | jq -r '.actions_caches[] | select(.key == "rotating-responsible-name-index") | .id')
+
+          # Check if there are caches to delete
+          if [ -z "$cache_ids" ]; then
+            echo "No caches found to delete for key: rotating-responsible-name-index."
+            exit 0
+          fi
+
+          # Delete each cache with the specific key
+          for cache_id in $cache_ids; do
+            echo "Deleting cache ID: $cache_id with key: rotating-responsible-name-index"
+            curl -X DELETE \
+                 -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                 "https://api.github.com/repos/${{ github.repository }}/actions/caches/$cache_id"
+          done
+
+      - name: Cache the updated index
+        uses: actions/cache@v3
+        with:
+          path: .github/workflows/data
+          key: rotating-responsible-name-index
