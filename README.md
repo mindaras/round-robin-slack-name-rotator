@@ -1,4 +1,4 @@
-# Round robin responsible person rotator
+# Round robin Slack name rotator
 
 A job that selects a responsible person every two weeks from the configured list in round robin fashion and posts a message to the Slack channel announcing the name.
 
