@@ -25,3 +25,7 @@ The list of names to choose from can be configured in `responsible-people.json`
 6. Posts the message to Slack
 7. Invalidates the cache
 8. Caches the updated timestamp and name index files
+
+## To do
+
+Currently, as the week checking step exists early on the intermediate week, the post job steps for caching do not run which results in cache expiration. Need to modify the job to utilize boolean flags for conditional running of certain steps instead of exits.
